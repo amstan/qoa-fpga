@@ -50,13 +50,6 @@ assert DEQUANT_TAB == eval("""{
 	{1536, -1536, 5120, -5120, 9216, -9216, 14336, -14336},
 }""".replace("{", "[").replace("}", "]"))
 
-def c_squeeze(x, dtype=numpy.int32):
-    """Squeeze an overflowed bigint into a modular arithmetic type like in C."""
-    ret = int(numpy.array([x]).astype(dtype)[0])
-    if x != ret:
-        logging.warning(f"Squeezed {x:#11X} in {dtype!r}", stack_info=True)
-    return ret
-
 class Lms:
     """
     QOA predicts each audio sample based on the previously decoded ones
@@ -76,32 +69,28 @@ class Lms:
         self.history = collections.deque(lms_state[0:4], maxlen=4)
         self.weights = list(lms_state[4:8])
 
-        logging.info(f"LMS {self.history} weights={self.weights}")
+        logging.info(f"LMS history={list(self.history)} weights={self.weights}")
 
         return self
 
     def predict(self): # in spec [4]
-        # prediction = sum((w*s) for (w, s) in zip(self.weights, self.history))
-        prediction = 0
-        for w, s in zip(self.weights, self.history):
-            prediction += c_squeeze(w * s)
-            prediction = c_squeeze(prediction)
-        assert (prediction).to_bytes(4, signed=True)
+        prediction = sum((w*s) for (w, s) in zip(self.weights, self.history))
+        assert int(prediction).to_bytes(4, signed=True)
         return prediction >> 13
 
     def update(self, sample, residual):
         assert residual.to_bytes(4, signed=True)
         delta = residual >> 4
 
+        # logging.info(f"LMS history={list(self.history)} weights={self.weights} {delta=}")
+
         for i in range(4): # in spec [6]
             self.weights[i] = self.weights[i] + (-delta if self.history[i] < 0 else delta)
             assert self.weights[i].to_bytes(4, signed=True)
             # https://phoboslab.org/log/2023/02/qoa-time-domain-audio-compression#:~:text=i%20have%20not%20proven%20that%20they%20do
-            # BUG(https://github.com/phoboslab/qoa/issues/25): this overflows a lot
+            # BUG(https://github.com/phoboslab/qoa/issues/25)
 
         self.history.append(sample) # in spec [7]
-
-        # logging.info(f"LMS {self.history} weights={self.weights} {delta=}")
 
 class Decoder():
     @classmethod
@@ -143,8 +132,8 @@ class Decoder():
         for quantized in qr:
             predicted = lms.predict()
             dequantized = DEQUANT_TAB[scalefactor][quantized]
-            reconstructed = predicted + dequantized
-            yield numpy.clip(reconstructed, -32768, 32767) # in spec [5]
+            reconstructed = numpy.clip(predicted + dequantized, -32768, 32767)
+            yield reconstructed # in spec [5]
             lms.update(sample=reconstructed, residual=dequantized)
 
     def decode_frame(self, frame_offset, dest):
@@ -160,8 +149,16 @@ class Decoder():
 
         for sample_index in range(0, self.fsamples, QOA_SLICE_LEN):
             for ch in range(self.channels):
+                # logging.info(f"{ch=} {sample_index=}")
                 slice_samples = tuple(self.decode_slice(lms[ch], o))
-                dest[ch][sample_index : sample_index + QOA_SLICE_LEN] = slice_samples
+                try:
+                    dest[ch][sample_index : sample_index + QOA_SLICE_LEN] = slice_samples
+                except ValueError:
+                    # "The last slice (for each channel) in the last
+                    # frame may contain less than 20 samples"
+                    # so let's crop slice_samples so it fits
+                    slice_samples = slice_samples[:self.total_sample_count % 20]
+                    dest[ch][sample_index : sample_index + QOA_SLICE_LEN] = slice_samples
                 o += SLICE_STRUCT.size
 
         assert (o - frame_offset) == self.fsize, "we should have consumed the whole frame"
@@ -175,20 +172,15 @@ class Decoder():
         sample_index = 0
         frame_offset = FIRST_FRAME_OFFSET
 
-        # first predict overflow warning
-        frame_offset = 2274808
-        sample_index = 2816000
-
-        # decoder != wav
-        # sample_index = 2821120
-        # frame_offset = 2278944
-
         frame_count = 0
-        while True:
+        while sample_index < self.total_sample_count:
             frame_size = d.decode_frame(frame_offset, samples[:,sample_index:])
-            logging.info(f"finished a {frame_size=} @{frame_offset} => samples @[{sample_index}: +{self.fsamples}]")
+            logging.info(f"finished a {frame_size=} @{frame_offset} => samples @[{sample_index}: +{self.fsamples}] / {self.total_sample_count} total")
 
-            assert (samples[:,sample_index:sample_index+self.fsamples] == w_np[:,sample_index:sample_index+self.fsamples]).all()
+            if not frame_size:
+                break
+
+            # assert (samples[:,sample_index:sample_index+self.fsamples] == w_np[:,sample_index:sample_index+self.fsamples]).all()
 
             frame_offset += frame_size
             sample_index += self.fsamples
@@ -216,6 +208,6 @@ if __name__ == "__main__":
 
     decoded_samples = d.decode()
 
-    # assert (decoded_samples==w_np[:,:decoded_samples.shape[1]]).all()
-    # assert decoded_samples.shape == w_np.shape
+    assert (decoded_samples==w_np[:,:decoded_samples.shape[1]]).all()
+    assert decoded_samples.shape == w_np.shape
 
