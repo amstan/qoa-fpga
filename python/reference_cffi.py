@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Wraps the reference implementation (phoboslab/qoa) so it's easily
-callable and introspectable from python."""
+"""Wraps the reference implementation (phoboslab/qoa) so it's "easily"
+callable and introspectable from python. A little more clunky to use
+than the pure python, but more accurate (since it includes the reference)
+and way faster."""
 
 import cffi
 import pathlib
@@ -8,7 +10,7 @@ import subprocess
 
 ffi = cffi.FFI()
 
-QOA_FILENAME = (pathlib.Path(__file__)/"../qoa/qoa.h").resolve()
+QOA_FILENAME = (pathlib.Path(__file__)/"../../qoa-reference/qoa.h").resolve()
 
 # preprocess since cffi cannot do most # directives
 pre = subprocess.check_output([
@@ -26,7 +28,7 @@ ffi.set_source(
     #include "qoa.h"
     """,
     include_dirs = (QOA_FILENAME.parent,))
-lib = ffi.dlopen(ffi.compile(tmpdir="build/"))
+lib = ffi.dlopen(ffi.compile(tmpdir="../build/"))
 
 def qoa_to_dict(desc):
     return{k:getattr(desc, k) for k in dir(desc)}
@@ -66,6 +68,6 @@ class Decode():
     def __repr__(self):
         return f"Decode(desc={qoa_to_dict(self.desc)})"
 
-
-d = Decode(open("samples/allegaeon-beasts-and-worms.qoa", "br").read())
-d2 = Decode(open("samples/allegaeon-beasts-and-worms.qoa", "br").read())
+if __name__ == "__main__":
+    d = Decode(open("../samples/allegaeon-beasts-and-worms.qoa", "br").read())
+    buf = d.decode()

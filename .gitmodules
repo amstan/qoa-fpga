@@ -1,3 +1,3 @@
-[submodule "qoa"]
-	path = qoa
+[submodule "qoa-reference"]
+	path = qoa-reference
 	url = https://github.com/phoboslab/qoa.git
