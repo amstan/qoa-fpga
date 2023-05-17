@@ -164,7 +164,7 @@ class Decoder():
         assert (o - frame_offset) == self.fsize, "we should have consumed the whole frame"
         return self.fsize
 
-    def decode(self):
+    def decode(self, _check_against=None):
         """Decode then return numpy array with whole file."""
         self.decode_header()
         samples = numpy.empty((self.channels, self.total_sample_count), numpy.int16)
@@ -172,42 +172,23 @@ class Decoder():
         sample_index = 0
         frame_offset = FIRST_FRAME_OFFSET
 
-        frame_count = 0
         while sample_index < self.total_sample_count:
-            frame_size = d.decode_frame(frame_offset, samples[:,sample_index:])
+            frame_size = self.decode_frame(frame_offset, samples[:,sample_index:])
             logging.info(f"finished a {frame_size=} @{frame_offset} => samples @[{sample_index}: +{self.fsamples}] / {self.total_sample_count} total")
 
             if not frame_size:
                 break
 
-            # assert (samples[:,sample_index:sample_index+self.fsamples] == w_np[:,sample_index:sample_index+self.fsamples]).all()
+            if _check_against is not None:
+                assert ((samples[:,sample_index:sample_index+self.fsamples] ==
+                        _check_against[:,sample_index:sample_index+self.fsamples]).all())
 
             frame_offset += frame_size
             sample_index += self.fsamples
-            frame_count += 1
+        return samples
 
-        return samples[:,:sample_index]
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        # style="{",
-        format = "%(funcName)s() %(message)s",
-        level = logging.DEBUG
-    )
-
-    import wave
-    w = wave.open("../samples/allegaeon-beasts-and-worms.decoded.wav")
-    w_bytes = w.readframes(w.getnframes())
-    w_np = numpy.frombuffer(w_bytes, dtype=numpy.int16).reshape(w.getnchannels(), w.getnframes(), order='F')
-
-    d = Decoder.from_file("../samples/allegaeon-beasts-and-worms.qoa")
-    d.decode_header()
-    assert d.total_sample_count == w.getnframes()
-    assert d.channels == w.getnchannels()
-    assert d.samplerate == w.getframerate()
-
-    decoded_samples = d.decode()
-
-    assert (decoded_samples==w_np[:,:decoded_samples.shape[1]]).all()
-    assert decoded_samples.shape == w_np.shape
-
+logging.basicConfig(
+    # style="{",
+    format = "%(funcName)s() %(message)s",
+    level = logging.DEBUG
+)
