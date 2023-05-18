@@ -18,10 +18,13 @@ import math
 import numpy
 import struct
 
+MAGIC = b'qoaf'
 FILE_HEADER_STRUCT = struct.Struct(">4sI")
 FRAME_HEADER_STRUCT = struct.Struct(">B3sHH")
 SLICE_STRUCT = struct.Struct(">Q")
 QOA_SLICE_LEN = 20
+MAX_SLICES_PER_FRAME = 256
+SAMPLES_PER_FRAME = MAX_SLICES_PER_FRAME * QOA_SLICE_LEN
 
 FIRST_FRAME_OFFSET = FILE_HEADER_STRUCT.size
 
@@ -81,8 +84,7 @@ class Lms:
         self.history = collections.deque(lms_state[0:4], maxlen=4)
         self.weights = list(lms_state[4:8])
 
-        logging.info(f"LMS history={list(self.history)} weights={self.weights}")
-
+        logging.info(self)
         return self
 
     def predict(self): # in spec [4]
@@ -94,15 +96,16 @@ class Lms:
         assert residual.to_bytes(4, signed=True)
         delta = residual >> 4
 
-        # logging.info(f"LMS history={list(self.history)} weights={self.weights} {delta=}")
+        logging.info(f"{self!r} {delta=}")
 
         for i in range(4): # in spec [6]
             self.weights[i] = self.weights[i] + (-delta if self.history[i] < 0 else delta)
             assert self.weights[i].to_bytes(4, signed=True)
             # https://phoboslab.org/log/2023/02/qoa-time-domain-audio-compression#:~:text=i%20have%20not%20proven%20that%20they%20do
-            # BUG(https://github.com/phoboslab/qoa/issues/25)
-
         self.history.append(sample) # in spec [7]
+
+    def __repr__(self):
+        return f"LMS history={list(self.history)} weights={self.weights}"
 
 class Decoder():
     @classmethod
@@ -114,7 +117,7 @@ class Decoder():
 
     def decode_header(self):
         magic, self.total_sample_count = FILE_HEADER_STRUCT.unpack_from(self.buf)
-        assert magic == b'qoaf'
+        assert magic == MAGIC
         self.decode_frame_header(FIRST_FRAME_OFFSET)
 
     def decode_frame_header(self, frame_offset, dynamic_ok=False):
@@ -169,7 +172,7 @@ class Decoder():
                     # "The last slice (for each channel) in the last
                     # frame may contain less than 20 samples"
                     # so let's crop slice_samples so it fits
-                    slice_samples = slice_samples[:self.total_sample_count % 20]
+                    slice_samples = slice_samples[:self.total_sample_count % QOA_SLICE_LEN]
                     dest[ch][sample_index : sample_index + QOA_SLICE_LEN] = slice_samples
                 o += SLICE_STRUCT.size
 
