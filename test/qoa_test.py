@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 
+"""Multi-target test system for qoa encoders and decoders."""
+
+import argparse
 import numpy
 import sys
 import pathlib
 import unittest
 import wave
 
-sys.path.append("../python")
-import qoa as module
-
-SAMPLES = (pathlib.Path(__file__)/"../../samples/").resolve()
-
-class DecodeTest(unittest.TestCase):
+class QoaTest(unittest.TestCase):
     def test_decode_against_reference(self, audio_name="allegaeon-beasts-and-worms"):
         w = wave.open(str(SAMPLES/(audio_name+".decoded.wav")))
         w_bytes = w.readframes(w.getnframes())
@@ -29,4 +27,19 @@ class DecodeTest(unittest.TestCase):
         assert decoded_samples.shape == w_np.shape
 
 if __name__ == "__main__":
-    unittest.main()
+    modules = (pathlib.Path(__file__)/"../../python").resolve()
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-i", "--implementation",
+                        choices=[m.stem for m in modules.glob("*.py")],
+                        default="python_qoa",
+    )
+    args, unittest_args = parser.parse_known_args(sys.argv)
+    if "--" in unittest_args: unittest_args.remove("--")
+
+    sys.path.append(str(modules))
+    module = __import__(args.implementation)
+
+    SAMPLES = (pathlib.Path(__file__)/"../../samples/").resolve()
+
+    unittest.main(argv=unittest_args, exit=(not sys.flags.interactive))
