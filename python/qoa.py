@@ -168,13 +168,14 @@ class Decoder():
                 # logging.info(f"{ch=} {sample_index=}")
                 slice_samples = tuple(self.decode_slice(lms[ch], o))
                 try:
-                    dest[ch][sample_index : sample_index + QOA_SLICE_LEN] = slice_samples
+                    dest[sample_index : sample_index + QOA_SLICE_LEN,ch] = slice_samples
                 except ValueError:
                     # "The last slice (for each channel) in the last
                     # frame may contain less than 20 samples"
                     # so let's crop slice_samples so it fits
                     slice_samples = slice_samples[:self.total_sample_count % QOA_SLICE_LEN]
-                    dest[ch][sample_index : sample_index + QOA_SLICE_LEN] = slice_samples
+                    # breakpoint()
+                    dest[sample_index : sample_index + QOA_SLICE_LEN,ch] = slice_samples
                 o += SLICE_STRUCT.size
 
         assert (o - frame_offset) == self.fsize, "we should have consumed the whole frame"
@@ -183,21 +184,21 @@ class Decoder():
     def decode(self, _check_against=None):
         """Decode then return numpy array with whole file."""
         self.decode_header()
-        samples = numpy.empty((self.channels, self.total_sample_count), numpy.int16)
+        samples = numpy.empty((self.total_sample_count, self.channels), numpy.int16)
 
         sample_index = 0
         frame_offset = FIRST_FRAME_OFFSET
 
         while sample_index < self.total_sample_count:
-            frame_size = self.decode_frame(frame_offset, samples[:,sample_index:])
+            frame_size = self.decode_frame(frame_offset, samples[sample_index:])
             logging.info(f"finished a {frame_size=} @{frame_offset} => samples @[{sample_index}: +{self.fsamples}] / {self.total_sample_count} total")
 
             if not frame_size:
                 break
 
             if _check_against is not None:
-                assert ((samples[:,sample_index:sample_index+self.fsamples] ==
-                        _check_against[:,sample_index:sample_index+self.fsamples]).all())
+                assert (_check_against[sample_index:sample_index+self.fsamples] ==
+                        samples[sample_index:sample_index+self.fsamples]).all()
 
             frame_offset += frame_size
             sample_index += self.fsamples
