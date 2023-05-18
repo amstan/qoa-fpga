@@ -75,6 +75,10 @@ class Lms:
 
     STRUCT = struct.Struct(">4h4h")
 
+    # Same as reference
+    # "This helps with the prediction of the first few ms of a file."
+    INITIAL_WEIGHTS = [0, 0, -(1<<13), (1<<14)]
+
     @classmethod
     def load(cls, buf, offset):
         lms_state = cls.STRUCT.unpack_from(buf, offset)
@@ -103,6 +107,10 @@ class Lms:
             assert self.weights[i].to_bytes(4, signed=True)
             # https://phoboslab.org/log/2023/02/qoa-time-domain-audio-compression#:~:text=i%20have%20not%20proven%20that%20they%20do
         self.history.append(sample) # in spec [7]
+
+    def encode(self):
+        logging.info(self)
+        return self.STRUCT.pack(*self.history, *self.weights)
 
     def __repr__(self):
         return f"LMS history={list(self.history)} weights={self.weights}"
@@ -202,8 +210,70 @@ class Decoder():
             sample_index += self.fsamples
         return samples
 
+class Encoder():
+    def __init__(self, samples:numpy.array, samplerate=44100):
+        self.total_sample_count, self.channels = samples.shape
+        assert samples.dtype == numpy.int16
+        self.samples = samples
+        self.samplerate = samplerate
+
+    def encode_header(self):
+        return FILE_HEADER_STRUCT.pack(
+            MAGIC,
+            self.total_sample_count,
+        )
+
+    def encode_frame(self, frame_samples):
+        frame_sample_count, frame_channels = frame_samples.shape
+        assert frame_channels == len(self.lms)
+        fsize = (
+            FRAME_HEADER_STRUCT.size +
+            Lms.STRUCT.size * frame_channels +
+            SLICE_STRUCT.size * (frame_sample_count // QOA_SLICE_LEN) * frame_channels
+        )
+
+        yield FRAME_HEADER_STRUCT.pack(
+            frame_channels,
+            self.samplerate.to_bytes(3),
+            frame_sample_count,
+            fsize,
+        )
+
+        for lms in self.lms:
+            # If the weights have grown too large, reset them to 0. This may happen
+            # with certain high-frequency sounds. This is a last resort and will
+            # introduce quite a bit of noise, but should at least prevent pops/clicks.
+            # See https://github.com/phoboslab/qoa/issues/25
+            if sum(w*w for w in lms.weights) > 0x2fffffff:
+                lms.weights = [0, 0, 0, 0]
+
+            yield lms.encode()
+
+    def encode_iter(self):
+        """Yield byte chunks for the destination file."""
+        yield self.encode_header()
+
+        self.lms = []
+        for ch in range(self.channels):
+            lms = Lms()
+            lms.weights = Lms.INITIAL_WEIGHTS.copy()
+            lms.history = collections.deque([0, 0, 0, 0], maxlen=4)
+            self.lms.append(lms)
+
+        sample_index = 0
+        while len(frame_samples := self.samples[sample_index : sample_index + SAMPLES_PER_FRAME]):
+            logging.info(f"samples @[{sample_index}: +{len(frame_samples)}] => ")
+            yield from self.encode_frame(frame_samples)
+            sample_index += SAMPLES_PER_FRAME
+
 logging.basicConfig(
     # style="{",
     format = "%(funcName)s() %(message)s",
     level = logging.DEBUG
 )
+
+if __name__ == "__main__":
+    samples = numpy.arange(100000, dtype=numpy.int16).reshape((-1, 2))
+    e = Encoder(samples)
+    for chunk in e.encode_iter():
+        print(repr(chunk))
