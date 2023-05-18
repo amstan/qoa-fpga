@@ -76,8 +76,8 @@ class Lms:
     STRUCT = struct.Struct(">4h4h")
 
     @classmethod
-    def load(cls, buf, offset):
-        lms_state = cls.STRUCT.unpack_from(buf, offset)
+    def load(cls, buf):
+        lms_state = cls.STRUCT.unpack_from(buf)
 
         self = cls()
 
@@ -119,16 +119,17 @@ class Decoder():
     def decode_header(self):
         magic, self.total_sample_count = FILE_HEADER_STRUCT.unpack_from(self.buf)
         assert magic == MAGIC
-        self.decode_frame_header(FIRST_FRAME_OFFSET)
+        self.decode_frame_header(self.buf[FIRST_FRAME_OFFSET:])
 
-    def decode_frame_header(self, frame_offset, dynamic_ok=False):
+    def decode_frame_header(self, frame_buf, dynamic_ok=False):
         (
             frame_channels,
             frame_samplerate_s,
             self.fsamples,
             self.fsize,
-        ) = FRAME_HEADER_STRUCT.unpack_from(self.buf, frame_offset)
+        ) = FRAME_HEADER_STRUCT.unpack_from(frame_buf)
         frame_samplerate = int.from_bytes(frame_samplerate_s, 'big')
+        logging.info(f"fsize={self.fsize} => fsamples={self.fsamples}")
 
         if hasattr(self, "samplerate"):
             assert (self.samplerate == frame_samplerate) or dynamic_ok
@@ -137,11 +138,10 @@ class Decoder():
             assert (self.channels == frame_channels) or dynamic_ok
         self.channels = frame_channels
 
-        logging.info(f"fsize={self.fsize} @{frame_offset} => fsamples={self.fsamples}")
-
-    def decode_slice(self, lms, offset):
-        """Generator to decode one slice at offset, yield each samples"""
-        s, = SLICE_STRUCT.unpack_from(self.buf, offset)
+    @staticmethod
+    def decode_slice(lms, slice_buf):
+        """Generator to decode one slice, yield each samples"""
+        s, = SLICE_STRUCT.unpack(slice_buf)
         scalefactor = s >> 60 # aka sf_quant
         qr = [(s >> (i*3)) & 0b111 for i in reversed(range(0, QOA_SLICE_LEN))]
         # logging.info(f"{scalefactor} {qr!r}")
@@ -152,21 +152,21 @@ class Decoder():
             yield reconstructed # in spec [5]
             lms.update(sample=reconstructed, residual=dequantized)
 
-    def decode_frame(self, frame_offset, dest):
-        """Decode one frame at frame_offset into dest."""
-        o = frame_offset
-        self.decode_frame_header(o)
-        o += FRAME_HEADER_STRUCT.size
+    def decode_frame(self, frame_buf, dest):
+        """Decode one frame from frame_buf into dest."""
+        self.decode_frame_header(frame_buf)
+        o = FRAME_HEADER_STRUCT.size
 
         lms = [] # indexed by channel
         for ch in range(self.channels):
-            lms.append(Lms.load(self.buf, o))
+            lms.append(Lms.load(frame_buf[o:]))
             o += Lms.STRUCT.size
 
         for sample_index in range(0, self.fsamples, QOA_SLICE_LEN):
             for ch in range(self.channels):
                 # logging.info(f"{ch=} {sample_index=}")
-                slice_samples = tuple(self.decode_slice(lms[ch], o))
+                slice_buf = frame_buf[o:o+SLICE_STRUCT.size]
+                slice_samples = tuple(self.decode_slice(lms[ch], slice_buf))
                 try:
                     dest[sample_index : sample_index + QOA_SLICE_LEN,ch] = slice_samples
                 except ValueError:
@@ -174,11 +174,10 @@ class Decoder():
                     # frame may contain less than 20 samples"
                     # so let's crop slice_samples so it fits
                     slice_samples = slice_samples[:self.total_sample_count % QOA_SLICE_LEN]
-                    # breakpoint()
                     dest[sample_index : sample_index + QOA_SLICE_LEN,ch] = slice_samples
                 o += SLICE_STRUCT.size
 
-        assert (o - frame_offset) == self.fsize, "we should have consumed the whole frame"
+        assert o == self.fsize, "we should have consumed the whole frame"
         return self.fsize
 
     def decode(self, _check_against=None):
@@ -190,7 +189,8 @@ class Decoder():
         frame_offset = FIRST_FRAME_OFFSET
 
         while sample_index < self.total_sample_count:
-            frame_size = self.decode_frame(frame_offset, samples[sample_index:])
+            logging.info(f"starting a frame @{frame_offset} => samples @[{sample_index}: +{self.fsamples}] / {self.total_sample_count} total")
+            frame_size = self.decode_frame(self.buf[frame_offset:], samples[sample_index:])
             logging.info(f"finished a {frame_size=} @{frame_offset} => samples @[{sample_index}: +{self.fsamples}] / {self.total_sample_count} total")
 
             if not frame_size:
