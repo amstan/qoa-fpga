@@ -111,7 +111,8 @@ class Decoder():
     @classmethod
     def from_file(cls, filename):
         self = cls()
-        self.buf = open(filename, "br").read()
+        with open(filename, "br") as f:
+            self.buf = f.read()
         logging.info(f"Decoding {filename!r}, {len(self.buf)} bytes long...")
         return self
 
