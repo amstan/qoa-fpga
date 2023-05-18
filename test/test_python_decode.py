@@ -7,7 +7,7 @@ import unittest
 import wave
 
 sys.path.append("../python")
-import qoa
+import qoa as module
 
 SAMPLES = (pathlib.Path(__file__)/"../../samples/").resolve()
 
@@ -17,7 +17,7 @@ class DecodeTest(unittest.TestCase):
 		w_bytes = w.readframes(w.getnframes())
 		w_np = numpy.frombuffer(w_bytes, dtype=numpy.int16).reshape(w.getnframes(), w.getnchannels())
 
-		d = qoa.Decoder.from_file(SAMPLES/(audio_name+".qoa"))
+		d = module.Decoder.from_file(SAMPLES/(audio_name+".qoa"))
 		d.decode_header()
 		assert d.total_sample_count == w.getnframes()
 		assert d.channels == w.getnchannels()
