@@ -10,19 +10,50 @@ import unittest
 import wave
 
 class QoaTest(unittest.TestCase):
-    def test_lms(self):
-        ORIGINAL_WEIGHTS = [0,0,-100,200]
-
+    def test_lms_history(self, samples=[32767, -100, 100, -32768]):
+        """LMS should update history properly."""
         l = module.Lms.load(
-            history=[0,0,0,100],
-            weights=ORIGINAL_WEIGHTS.copy(),
+            history=[0, 0, 0, 0],
+            weights=[0, 0, 0, 0]
         )
-        assert l.predict() == 2
 
-        l.update(-30000, 100)
-        assert l.history[-1] == -30000
-        assert l.weights != ORIGINAL_WEIGHTS
-        assert l.predict() == -756
+        for sample in samples:
+            l.update(
+                sample,
+                residual=0, # not testing this
+            )
+
+        assert list(l.history) == samples
+
+    def conduct_lms_predict_test(self, history, weights, update=None, post_predict=None, pre_predict=None):
+        """LMS should predict properly and update weights correctly."""
+        l = module.Lms.load(history=history, weights=weights)
+
+        if pre_predict is not None:
+            assert l.predict() == pre_predict
+
+        if update is not None:
+            sample, residual = update
+            l.update(sample, residual)
+            assert l.history[-1] == sample
+            assert l.weights != weights
+            if post_predict is not None:
+                assert l.predict() == post_predict
+
+    def test_lms_predict(self):
+        tests = {
+            "trivial": dict(
+                history=[0, 0, 0, 100],
+                weights=[0, 0, -100, 200],
+                pre_predict=2,
+                update=(-30000, 100),
+                post_predict=-756,
+            ),
+            # TODO: more to follow
+        }
+        for name, test in tests.items():
+            with self.subTest(name):
+                self.conduct_lms_predict_test(**test)
 
     def test_decode_against_reference(self, audio_name="allegaeon-beasts-and-worms"):
         w = wave.open(str(SAMPLES/(audio_name+".decoded.wav")))
