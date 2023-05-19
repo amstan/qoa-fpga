@@ -76,13 +76,15 @@ class Lms:
     STRUCT = struct.Struct(">4h4h")
 
     @classmethod
-    def load(cls, buf):
-        lms_state = cls.STRUCT.unpack_from(buf)
+    def load(cls, buf:bytes=None, history:list=None, weights:list=None):
+        if buf:
+            lms_state = cls.STRUCT.unpack_from(buf)
+            history = lms_state[0:4]
+            weights = lms_state[4:8]
 
         self = cls()
-
-        self.history = collections.deque(lms_state[0:4], maxlen=4)
-        self.weights = list(lms_state[4:8])
+        self.history = collections.deque(history, maxlen=4)
+        self.weights = list(weights)
 
         logging.info(self)
         return self

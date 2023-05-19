@@ -4,12 +4,26 @@
 
 import argparse
 import numpy
-import sys
 import pathlib
+import sys
 import unittest
 import wave
 
 class QoaTest(unittest.TestCase):
+    def test_lms(self):
+        ORIGINAL_WEIGHTS = [0,0,-100,200]
+
+        l = module.Lms.load(
+            history=[0,0,0,100],
+            weights=ORIGINAL_WEIGHTS.copy(),
+        )
+        assert l.predict() == 2
+
+        l.update(-30000, 100)
+        assert l.history[-1] == -30000
+        assert l.weights != ORIGINAL_WEIGHTS
+        assert l.predict() == -756
+
     def test_decode_against_reference(self, audio_name="allegaeon-beasts-and-worms"):
         w = wave.open(str(SAMPLES/(audio_name+".decoded.wav")))
         w_bytes = w.readframes(w.getnframes())
