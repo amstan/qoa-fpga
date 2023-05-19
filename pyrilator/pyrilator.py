@@ -31,8 +31,8 @@ import pprint
 import re
 import subprocess
 
-VFLAGS = [
-    # "-Wall", # TODO: Fix this
+VFLAGS = [ # TODO: add this to pyrilate arguments
+    # "-Wall", # TODO: fix lms.sv so it doesn't need it
     "-Wno-WIDTH", # These are inane, something as simple as (var == 25) ? : will warn with this on
 ]
 VERILATOR_SOURCES = [
@@ -159,6 +159,7 @@ def compile(sv_file:Path, build_dir):
 
     so_file = build_dir/f"{sv_module}.so"
 
+    # TODO: cache this somehow, ala how a makefile does it
     subprocess.check_call([
         "g++",
         "-fPIC",
