@@ -43,6 +43,7 @@ always @ * begin
 end
 
 always @ (posedge clk) begin
+
 	if (update) begin
 		// use delta to update weights, in spec [6]
 		for (integer i = 0; i < 4; i++) begin
@@ -53,6 +54,9 @@ always @ (posedge clk) begin
 		history[0:2] <= history[1:3];
 		history[3] <= sample;
 	end
+
+	// TODO: Figure out what happens when load, update &
+	// predict need to happen at the same time
 
 	if (load) begin
 		history <= load_history;
